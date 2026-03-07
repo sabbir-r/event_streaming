@@ -12,5 +12,8 @@
   "license": "ISC",
   "dependencies": {
     "nodemon": "^3.1.14"
+  },
+  "devDependencies": {
+    "@types/node": "^25.3.5"
   }
 }
