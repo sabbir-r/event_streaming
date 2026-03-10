@@ -3,7 +3,6 @@
 A lightweight, zero-dependency event streaming library for Node.js. Pub/sub, persistent storage, offset tracking, and KSQL-style live streaming — all embedded, no external broker required.
 
 [![npm version](https://img.shields.io/npm/v/node-event-streaming.svg)](https://www.npmjs.com/package/node-event-streaming)
-[![license](https://img.shields.io/npm/l/node-event-streaming.svg)](./LICENSE)
 
 ---
 
