@@ -1,6 +1,6 @@
 {
   "name": "node-event-streaming",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Lightweight, zero-dependency Node.js event streaming library with pub/sub, persistent storage, and live streams.",
   "main": "server.js",
   "files": [
@@ -8,28 +8,11 @@
     "README.md",
     "LICENSE.txt"
   ],
-  "keywords": [
-    "event-streaming",
-    "pub-sub",
-    "message-bus",
-    "event-driven",
-    "nodejs-streaming",
-    "kafka-alternative",
-    "embedded-messaging",
-    "real-time",
-    "offset-tracking",
-    "persistent-events",
-    "lightweight-kafka",
-    "event-log",
-    "message-queue",
-    "nodejs-pubsub",
-    "streaming"
-  ],
+  "keywords": [],
   "scripts": {
     "start": "node dist/server.js",
     "dev": "nodemon dist/server.js"
   },
-  "keywords": [],
   "author": "",
   "license": "MIT",
   "devDependencies": {
