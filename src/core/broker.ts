@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import path from 'path';
 import { Readable } from 'stream';
 import {
-  BusOptions,
+  StreamOptions,
   CleanupReport,
   ConsumerOptions,
   LogRecord,
@@ -76,10 +76,11 @@ export class EventStreaming {
     string,
     Map<string, Set<(rec: LogRecord) => void>>
   >();
+  private saveOffsetsPending = false;
 
   constructor(
     private readonly dataDir: string = './msgbus-data',
-    private readonly options: BusOptions = {},
+    private readonly options: StreamOptions = {},
   ) {
     fs.mkdirSync(dataDir, { recursive: true });
     this.offsetFile = path.join(dataDir, '_consumer-offsets.json');
@@ -121,6 +122,15 @@ export class EventStreaming {
       for (const [gid, c] of topic.consumers) snap[name][gid] = c.offset;
     }
     fs.writeFileSync(this.offsetFile, JSON.stringify(snap), 'utf-8');
+  }
+
+  private scheduleOffsetSave(): void {
+    if (this.saveOffsetsPending) return;
+    this.saveOffsetsPending = true;
+    setTimeout(() => {
+      this.saveOffsetsPending = false;
+      this.saveOffsets();
+    }, 500).unref();
   }
 
   produce(opts: ProduceOptions): number {
@@ -190,10 +200,10 @@ export class EventStreaming {
         try {
           const p = consumer.handler(record);
           if (p instanceof Promise)
-            p.then(() => this.saveOffsets()).catch((e) =>
+            p.then(() => this.scheduleOffsetSave()).catch((e) =>
               console.error(`[bus][${consumer.groupId}]`, e),
             );
-          else this.saveOffsets();
+          else this.scheduleOffsetSave();
         } catch (e) {
           console.error(`[bus][${consumer.groupId}]`, e);
         }

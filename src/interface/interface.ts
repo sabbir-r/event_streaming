@@ -40,7 +40,7 @@ export interface RetentionPolicy {
   maxRecords?: number;
 }
 
-export interface BusOptions {
+export interface StreamOptions {
   retention?: RetentionPolicy;
   cleanupIntervalMinutes?: number;
 }

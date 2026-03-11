@@ -82,7 +82,7 @@ export default class DiskStore {
 
   private startFlushLoop(): void {
     this.flushTimer = setInterval(() => this.flush(), FLUSH_INTERVAL_MS);
-    if ((this.flushTimer as any).unref) (this.flushTimer as any).unref();
+    // if ((this.flushTimer as any).unref) (this.flushTimer as any).unref();
   }
 
   flush(): void {

@@ -2,8 +2,8 @@
   "name": "node-event-streaming",
   "version": "1.1.2",
   "description": "Lightweight, zero-dependency Node.js event streaming library with pub/sub, persistent storage, and live streams.",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "main": "dist/server.js",
+  "types": "dist/server.d.ts",
   "license": "MIT",
   "author": "",
   "keywords": [
@@ -29,6 +29,8 @@
     "LICENSE.txt"
   ],
   "scripts": {
+    "start": "node dist/server.js",
+    "dev": "nodemon dist/server.js",
     "build": "tsc",
     "prepublishOnly": "npm run build"
   },

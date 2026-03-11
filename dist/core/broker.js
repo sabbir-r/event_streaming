@@ -92,6 +92,7 @@ class EventStreaming {
         this.retention = null;
         this.cleanupTimer = null;
         this.streamListeners = new Map();
+        this.saveOffsetsPending = false;
         fs.mkdirSync(dataDir, { recursive: true });
         this.offsetFile = path_1.default.join(dataDir, '_consumer-offsets.json');
         if (options.retention) {
@@ -130,6 +131,15 @@ class EventStreaming {
                 snap[name][gid] = c.offset;
         }
         fs.writeFileSync(this.offsetFile, JSON.stringify(snap), 'utf-8');
+    }
+    scheduleOffsetSave() {
+        if (this.saveOffsetsPending)
+            return;
+        this.saveOffsetsPending = true;
+        setTimeout(() => {
+            this.saveOffsetsPending = false;
+            this.saveOffsets();
+        }, 500).unref();
     }
     produce(opts) {
         const topic = this.getTopic(opts.topic);
@@ -176,9 +186,9 @@ class EventStreaming {
                 try {
                     const p = consumer.handler(record);
                     if (p instanceof Promise)
-                        p.then(() => this.saveOffsets()).catch((e) => console.error(`[bus][${consumer.groupId}]`, e));
+                        p.then(() => this.scheduleOffsetSave()).catch((e) => console.error(`[bus][${consumer.groupId}]`, e));
                     else
-                        this.saveOffsets();
+                        this.scheduleOffsetSave();
                 }
                 catch (e) {
                     console.error(`[bus][${consumer.groupId}]`, e);
