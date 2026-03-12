@@ -1,6 +1,6 @@
 {
   "name": "node-event-streaming",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Lightweight, zero-dependency Node.js event streaming library with pub/sub, persistent storage, and live streams.",
   "main": "dist/server.js",
   "types": "dist/server.d.ts",
