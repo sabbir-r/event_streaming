@@ -12,22 +12,23 @@ interface SegmentMeta {
 export default class DiskStore {
     private readonly dir;
     private readonly topic;
-    private writeBuffer;
     private currentFd;
     private currentSegmentSize;
     private currentSegmentBase;
-    private flushTimer;
-    private isFlushing;
     totalFlushed: number;
+    totalDropped: number;
+    private diskQueue;
+    private readonly MAX_QUEUE;
+    private isWorkerRunning;
     constructor(dir: string, topic: string);
     private get segDir();
     private listPaths;
     private openSegment;
     private openOrCreateActiveSegment;
     enqueue(record: LogRecord): void;
-    private startFlushLoop;
+    private startWorker;
     flush(): void;
-    readByOffsets(offsets: Set<number>): Generator<LogRecord>;
+    readByOffsets(offsets: Set<number>, getSegment?: (offset: number) => number | undefined): Generator<LogRecord>;
     replayAll(): Generator<LogRecord>;
     buildSegmentMetas(): SegmentMeta[];
     deleteSegment(baseOffset: number): number;

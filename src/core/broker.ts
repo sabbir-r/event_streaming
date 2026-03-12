@@ -77,6 +77,7 @@ export class EventStreaming {
     Map<string, Set<(rec: LogRecord) => void>>
   >();
   private saveOffsetsPending = false;
+  private saveOffsetTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     private readonly dataDir: string = './msg-data',
@@ -118,12 +119,16 @@ export class EventStreaming {
   }
 
   private saveOffsets(): void {
-    const snap: Record<string, Record<string, number>> = {};
-    for (const [name, topic] of this.topics) {
-      snap[name] = {};
-      for (const [gid, c] of topic.consumers) snap[name][gid] = c.offset;
-    }
-    fs.writeFileSync(this.offsetFile, JSON.stringify(snap), 'utf-8');
+    if (this.saveOffsetTimer) return;
+    this.saveOffsetTimer = setTimeout(() => {
+      const snap: Record<string, Record<string, number>> = {};
+      for (const [name, topic] of this.topics) {
+        snap[name] = {};
+        for (const [gid, c] of topic.consumers) snap[name][gid] = c.offset;
+      }
+      fs.writeFileSync(this.offsetFile, JSON.stringify(snap), 'utf-8');
+      this.saveOffsetTimer = null;
+    }, 1000);
   }
 
   private scheduleOffsetSave(): void {
@@ -197,17 +202,17 @@ export class EventStreaming {
 
   private deliver(topic: Topic, record: LogRecord): void {
     for (const consumer of topic.consumers.values()) {
-      if (consumer.offset === record.offset) {
-        consumer.offset++;
+      if (record.offset >= consumer.offset) {
+        consumer.offset = record.offset + 1;
         try {
           const p = consumer.handler(record);
           if (p instanceof Promise)
             p.then(() => this.scheduleOffsetSave()).catch((e) =>
-              console.error(`[node-event-stream][${consumer.groupId}]`, e),
+              console.error(`[node-event-streaming][${consumer.groupId}]`, e),
             );
           else this.scheduleOffsetSave();
         } catch (e) {
-          console.error(`[node-event-stream][${consumer.groupId}]`, e);
+          console.error(`[node-event-streaming][${consumer.groupId}]`, e);
         }
       }
     }
@@ -245,21 +250,19 @@ export class EventStreaming {
 
     return () => topicMap.get(key)?.delete(fn);
   }
-
   private catchUp(topic: Topic, consumer: Consumer<unknown>): void {
     const ringMin = topic.memory.minOffset;
-    const fromDisk = new Set<number>();
 
     if (ringMin !== -1 && consumer.offset < ringMin) {
-      for (let o = consumer.offset; o < ringMin; o++) fromDisk.add(o);
-    }
-
-    for (const rec of topic.disk.readByOffsets(fromDisk)) {
-      consumer.offset = rec.offset + 1;
-      try {
-        consumer.handler(rec);
-      } catch (e) {
-        console.error(`[node-event-stream][${consumer.groupId}] catchup`, e);
+      for (const rec of topic.disk.replayAll()) {
+        if (rec.offset < consumer.offset) continue;
+        if (rec.offset >= ringMin) break;
+        consumer.offset = rec.offset + 1;
+        try {
+          consumer.handler(rec);
+        } catch (e) {
+          console.error(`[bus][${consumer.groupId}] catchup`, e);
+        }
       }
     }
 
@@ -268,7 +271,7 @@ export class EventStreaming {
       try {
         consumer.handler(rec);
       } catch (e) {
-        console.error(`[node-event-stream][${consumer.groupId}] catchup`, e);
+        console.error(`[bus][${consumer.groupId}] catchup`, e);
       }
     }
 
@@ -306,8 +309,14 @@ export class EventStreaming {
     }
 
     const results: LogRecord[] = [];
-    for (const rec of topic.memory) {
-      if (fromRing.has(rec.offset)) results.push(rec);
+
+    if (fromRing.size > 0) {
+      for (const rec of topic.memory.from(ringMin)) {
+        if (fromRing.has(rec.offset)) {
+          results.push(rec);
+          if (results.length + fromDisk.size === set.size) break;
+        }
+      }
     }
 
     for (const rec of topic.disk.readByOffsets(fromDisk)) {

@@ -93,6 +93,7 @@ class EventStreaming {
         this.cleanupTimer = null;
         this.streamListeners = new Map();
         this.saveOffsetsPending = false;
+        this.saveOffsetTimer = null;
         fs.mkdirSync(dataDir, { recursive: true });
         this.offsetFile = path_1.default.join(dataDir, '_consumer-offsets.json');
         if (options.retention) {
@@ -124,13 +125,18 @@ class EventStreaming {
         return {};
     }
     saveOffsets() {
-        const snap = {};
-        for (const [name, topic] of this.topics) {
-            snap[name] = {};
-            for (const [gid, c] of topic.consumers)
-                snap[name][gid] = c.offset;
-        }
-        fs.writeFileSync(this.offsetFile, JSON.stringify(snap), 'utf-8');
+        if (this.saveOffsetTimer)
+            return;
+        this.saveOffsetTimer = setTimeout(() => {
+            const snap = {};
+            for (const [name, topic] of this.topics) {
+                snap[name] = {};
+                for (const [gid, c] of topic.consumers)
+                    snap[name][gid] = c.offset;
+            }
+            fs.writeFileSync(this.offsetFile, JSON.stringify(snap), 'utf-8');
+            this.saveOffsetTimer = null;
+        }, 1000);
     }
     scheduleOffsetSave() {
         if (this.saveOffsetsPending)
@@ -181,17 +187,17 @@ class EventStreaming {
     }
     deliver(topic, record) {
         for (const consumer of topic.consumers.values()) {
-            if (consumer.offset === record.offset) {
-                consumer.offset++;
+            if (record.offset >= consumer.offset) {
+                consumer.offset = record.offset + 1;
                 try {
                     const p = consumer.handler(record);
                     if (p instanceof Promise)
-                        p.then(() => this.scheduleOffsetSave()).catch((e) => console.error(`[node-event-stream][${consumer.groupId}]`, e));
+                        p.then(() => this.scheduleOffsetSave()).catch((e) => console.error(`[node-event-streaming][${consumer.groupId}]`, e));
                     else
                         this.scheduleOffsetSave();
                 }
                 catch (e) {
-                    console.error(`[node-event-stream][${consumer.groupId}]`, e);
+                    console.error(`[node-event-streaming][${consumer.groupId}]`, e);
                 }
             }
         }
@@ -221,18 +227,19 @@ class EventStreaming {
     }
     catchUp(topic, consumer) {
         const ringMin = topic.memory.minOffset;
-        const fromDisk = new Set();
         if (ringMin !== -1 && consumer.offset < ringMin) {
-            for (let o = consumer.offset; o < ringMin; o++)
-                fromDisk.add(o);
-        }
-        for (const rec of topic.disk.readByOffsets(fromDisk)) {
-            consumer.offset = rec.offset + 1;
-            try {
-                consumer.handler(rec);
-            }
-            catch (e) {
-                console.error(`[node-event-stream][${consumer.groupId}] catchup`, e);
+            for (const rec of topic.disk.replayAll()) {
+                if (rec.offset < consumer.offset)
+                    continue;
+                if (rec.offset >= ringMin)
+                    break;
+                consumer.offset = rec.offset + 1;
+                try {
+                    consumer.handler(rec);
+                }
+                catch (e) {
+                    console.error(`[bus][${consumer.groupId}] catchup`, e);
+                }
             }
         }
         for (const rec of topic.memory.from(consumer.offset)) {
@@ -241,7 +248,7 @@ class EventStreaming {
                 consumer.handler(rec);
             }
             catch (e) {
-                console.error(`[node-event-stream][${consumer.groupId}] catchup`, e);
+                console.error(`[bus][${consumer.groupId}] catchup`, e);
             }
         }
         this.saveOffsets();
@@ -275,9 +282,14 @@ class EventStreaming {
                 fromDisk.add(off);
         }
         const results = [];
-        for (const rec of topic.memory) {
-            if (fromRing.has(rec.offset))
-                results.push(rec);
+        if (fromRing.size > 0) {
+            for (const rec of topic.memory.from(ringMin)) {
+                if (fromRing.has(rec.offset)) {
+                    results.push(rec);
+                    if (results.length + fromDisk.size === set.size)
+                        break;
+                }
+            }
         }
         for (const rec of topic.disk.readByOffsets(fromDisk)) {
             results.push(rec);

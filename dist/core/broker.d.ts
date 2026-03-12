@@ -31,6 +31,7 @@ export declare class EventStreaming {
     private cleanupTimer;
     private streamListeners;
     private saveOffsetsPending;
+    private saveOffsetTimer;
     constructor(dataDir?: string, options?: StreamOptions);
     private getTopic;
     private loadOffsets;

@@ -42,16 +42,17 @@ class DiskStore {
     constructor(dir, topic) {
         this.dir = dir;
         this.topic = topic;
-        this.writeBuffer = [];
         this.currentFd = -1;
         this.currentSegmentSize = 0;
         this.currentSegmentBase = 0;
-        this.flushTimer = null;
-        this.isFlushing = false;
         this.totalFlushed = 0;
+        this.totalDropped = 0;
+        this.diskQueue = [];
+        this.MAX_QUEUE = 100000;
+        this.isWorkerRunning = false;
         fs.mkdirSync(this.segDir, { recursive: true });
         this.openOrCreateActiveSegment();
-        this.startFlushLoop();
+        this.startWorker();
     }
     get segDir() {
         return path.join(this.dir, this.topic);
@@ -80,8 +81,9 @@ class DiskStore {
         const last = files[files.length - 1];
         const base = parseInt(path.basename(last, '.log'), 10);
         const size = fs.statSync(last).size;
-        if (size >= MAX_SEGMENT_BYTES)
+        if (size >= MAX_SEGMENT_BYTES) {
             this.openSegment(base + 1);
+        }
         else {
             this.currentSegmentBase = base;
             this.currentSegmentSize = size;
@@ -89,47 +91,81 @@ class DiskStore {
         }
     }
     enqueue(record) {
-        this.writeBuffer.push(JSON.stringify(record) + '\n');
-        if (this.writeBuffer.length >= FLUSH_BATCH_SIZE)
-            this.flush();
+        if (this.diskQueue.length >= this.MAX_QUEUE) {
+            this.diskQueue.shift();
+            this.totalDropped++;
+            if (this.totalDropped % 1000 === 0) {
+                console.warn(`[node-event-streaming][${this.topic}] ` +
+                    `${this.totalDropped} records dropped — disk can't keep up`);
+            }
+        }
+        this.diskQueue.push(JSON.stringify(record) + '\n');
     }
-    startFlushLoop() {
-        this.flushTimer = setInterval(() => this.flush(), FLUSH_INTERVAL_MS);
-        // if ((this.flushTimer as any).unref) (this.flushTimer as any).unref();
+    startWorker() {
+        if (this.isWorkerRunning)
+            return;
+        this.isWorkerRunning = true;
+        const tick = () => {
+            if (this.diskQueue.length === 0) {
+                setTimeout(tick, FLUSH_INTERVAL_MS).unref();
+                return;
+            }
+            const batch = this.diskQueue.splice(0, FLUSH_BATCH_SIZE);
+            const payload = batch.join('');
+            const byteLength = Buffer.byteLength(payload, 'utf-8');
+            if (this.currentSegmentSize + byteLength >= MAX_SEGMENT_BYTES)
+                this.openSegment(this.currentSegmentBase + 1);
+            fs.writeSync(this.currentFd, payload, null, 'utf-8');
+            this.currentSegmentSize += byteLength;
+            this.totalFlushed += batch.length;
+            if (this.diskQueue.length > 0)
+                setImmediate(tick);
+            else
+                setTimeout(tick, FLUSH_INTERVAL_MS).unref();
+        };
+        setImmediate(tick);
     }
     flush() {
-        if (this.isFlushing || this.writeBuffer.length === 0)
-            return;
-        this.isFlushing = true;
-        const batch = this.writeBuffer.splice(0);
-        const payload = batch.join('');
-        const byteLength = Buffer.byteLength(payload, 'utf-8');
-        if (this.currentSegmentSize + byteLength >= MAX_SEGMENT_BYTES)
-            this.openSegment(this.currentSegmentBase + 1);
-        fs.writeSync(this.currentFd, payload, null, 'utf-8');
-        this.currentSegmentSize += byteLength;
-        this.totalFlushed += batch.length;
-        this.isFlushing = false;
+        while (this.diskQueue.length > 0) {
+            const batch = this.diskQueue.splice(0, FLUSH_BATCH_SIZE);
+            const payload = batch.join('');
+            const byteLength = Buffer.byteLength(payload, 'utf-8');
+            if (this.currentSegmentSize + byteLength >= MAX_SEGMENT_BYTES)
+                this.openSegment(this.currentSegmentBase + 1);
+            fs.writeSync(this.currentFd, payload, null, 'utf-8');
+            this.currentSegmentSize += byteLength;
+            this.totalFlushed += batch.length;
+        }
     }
-    *readByOffsets(offsets) {
+    *readByOffsets(offsets, getSegment) {
+        var _a;
         if (offsets.size === 0)
             return;
-        const remaining = new Set(offsets);
-        for (const file of this.listPaths()) {
-            if (remaining.size === 0)
-                break;
+        const bySegment = new Map();
+        for (const off of offsets) {
+            const seg = (_a = getSegment === null || getSegment === void 0 ? void 0 : getSegment(off)) !== null && _a !== void 0 ? _a : 0;
+            if (!bySegment.has(seg))
+                bySegment.set(seg, new Set());
+            bySegment.get(seg).add(off);
+        }
+        for (const [segBase, segOffsets] of bySegment) {
+            const file = path.join(this.segDir, String(segBase).padStart(10, '0') + '.log');
+            if (!fs.existsSync(file))
+                continue;
             const content = fs.readFileSync(file, 'utf-8');
             for (const line of content.split('\n')) {
                 if (!line.trim())
                     continue;
                 try {
                     const rec = JSON.parse(line);
-                    if (remaining.has(rec.offset)) {
+                    if (segOffsets.has(rec.offset)) {
                         yield rec;
-                        remaining.delete(rec.offset);
+                        segOffsets.delete(rec.offset);
+                        if (segOffsets.size === 0)
+                            break;
                     }
                 }
-                catch (_a) {
+                catch (_b) {
                     /* skip */
                 }
             }
@@ -217,8 +253,6 @@ class DiskStore {
     }
     close() {
         this.flush();
-        if (this.flushTimer)
-            clearInterval(this.flushTimer);
         if (this.currentFd !== -1)
             fs.closeSync(this.currentFd);
     }
